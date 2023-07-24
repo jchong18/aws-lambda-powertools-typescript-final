@@ -1,46 +1,55 @@
-import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from 'aws-lambda';
+import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { Product } from './types';
 import { DynamoDB } from 'aws-sdk';
 import { v4 as uuidv4 } from 'uuid';
 import { DeleteItemInput, GetItemInput, PutItemInput, ScanInput } from 'aws-sdk/clients/dynamodb';
+import { logger, metrics, tracer } from './common/powertools';
+import { injectLambdaContext } from '@aws-lambda-powertools/logger';
+import { logMetrics, MetricUnits } from '@aws-lambda-powertools/metrics';
+import { captureLambdaHandler } from '@aws-lambda-powertools/tracer';
+import middy from '@middy/core';
 
-const dbClient = new DynamoDB.DocumentClient();
+const dbClient = tracer.captureAWSClient(new DynamoDB.DocumentClient());
 const dynamoDBTableName = process.env.PRODUCT_TABLE_NAME || '';
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-export const handler = async (event: APIGatewayProxyEvent, context: Context): Promise<APIGatewayProxyResult> => {
-    // Log the incoming event
-    console.info('Lambda Invocation Event :: ', event);
-    // logger.info('Lambda invocation event', { event });
-    if (event.httpMethod === 'PUT') {
-        return addResponseHeaders(await processPutEvent(event));
-    }
-    if (event.httpMethod === 'POST') {
-        return addResponseHeaders(await processPostEvent(event));
-    }
-    if (event.httpMethod === 'GET') {
-        if (!event.pathParameters) {
-            return addResponseHeaders(await processGetAllEvent());
-        } else {
-            return addResponseHeaders(await processGetByIdEvent(event));
+export const handler = middy<APIGatewayProxyEvent, APIGatewayProxyResult>(
+    async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
+        // Log the incoming event
+        logger.info('Starting to invoke Lambda handler');
+        if (event.httpMethod === 'PUT') {
+            return addResponseHeaders(await processPutEvent(event));
         }
-    }
-    if (event.httpMethod === 'DELETE') {
-        return addResponseHeaders(await processDeleteEvent(event));
-    }
+        if (event.httpMethod === 'POST') {
+            return addResponseHeaders(await processPostEvent(event));
+        }
+        if (event.httpMethod === 'GET') {
+            if (!event.pathParameters) {
+                return addResponseHeaders(await processGetAllEvent());
+            } else {
+                return addResponseHeaders(await processGetByIdEvent(event));
+            }
+        }
+        if (event.httpMethod === 'DELETE') {
+            return addResponseHeaders(await processDeleteEvent(event));
+        }
 
-    const response = {
-        statusCode: 500,
-        body: JSON.stringify({
-            message: 'some error happened',
-        }),
-    };
-    console.error('Error happened while processing the request');
-    return addResponseHeaders(response);
-};
+        const response = {
+            statusCode: 500,
+            body: JSON.stringify({
+                message: 'some error happened',
+            }),
+        };
+        logger.error('Error happened while processing the request');
+        return addResponseHeaders(response);
+    },
+)
+    .use(injectLambdaContext(logger, { logEvent: true }))
+    .use(logMetrics(metrics, { captureColdStartMetric: true }))
+    .use(captureLambdaHandler(tracer));
 
 const processPutEvent = async (input: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    console.info('Processing Put Event');
+    logger.info('Processing Put Event');
     try {
         const id = input.pathParameters?.id;
         const product: Product = JSON.parse(input.body || '') || {};
@@ -65,7 +74,7 @@ const processPutEvent = async (input: APIGatewayProxyEvent): Promise<APIGatewayP
 
         await dbClient.put(params).promise();
         const successMessage = `Product with id = ${id} edited(created)`;
-        console.log(successMessage);
+        logger.info(successMessage);
         return {
             statusCode: 201,
             body: JSON.stringify({
@@ -75,7 +84,7 @@ const processPutEvent = async (input: APIGatewayProxyEvent): Promise<APIGatewayP
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
         const errorMessage = `Internal Server Error for Put :: ${err.message}`;
-        console.error(errorMessage);
+        logger.error(errorMessage);
         return {
             statusCode: 500,
             body: JSON.stringify({
@@ -86,7 +95,7 @@ const processPutEvent = async (input: APIGatewayProxyEvent): Promise<APIGatewayP
 };
 
 const processPostEvent = async (input: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    console.info('Processing Post Event');
+    logger.info('Processing Post Event');
     try {
         const product: Product = JSON.parse(input.body || '') || {};
         const productId = uuidv4();
@@ -102,7 +111,7 @@ const processPostEvent = async (input: APIGatewayProxyEvent): Promise<APIGateway
         await dbClient.put(params).promise();
 
         const successMessage = `Product with id = ${productId} created`;
-        console.log(successMessage);
+        logger.info(successMessage);
         return {
             statusCode: 201,
             body: JSON.stringify({
@@ -112,7 +121,7 @@ const processPostEvent = async (input: APIGatewayProxyEvent): Promise<APIGateway
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
         const errorMessage = `Internal Server Error for Post :: ${err.message}`;
-        console.error(errorMessage);
+        logger.error(errorMessage);
         return {
             statusCode: 500,
             body: JSON.stringify({
@@ -123,7 +132,7 @@ const processPostEvent = async (input: APIGatewayProxyEvent): Promise<APIGateway
 };
 
 const processGetAllEvent = async (): Promise<APIGatewayProxyResult> => {
-    console.info('Processing Get All Event');
+    logger.info('Processing Get All Event');
     try {
         const params: ScanInput = {
             TableName: dynamoDBTableName,
@@ -132,7 +141,8 @@ const processGetAllEvent = async (): Promise<APIGatewayProxyResult> => {
         const products = await dbClient.scan(params).promise();
 
         const successMessage = `Successfully retrieved all products: ${products.Items}`;
-        console.log(successMessage);
+        metrics.addMetric('getAllCount', MetricUnits.Count, products.Items?.length || 0);
+        logger.info(successMessage);
         return {
             statusCode: 200,
             body: JSON.stringify(products.Items),
@@ -140,7 +150,7 @@ const processGetAllEvent = async (): Promise<APIGatewayProxyResult> => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
         const errorMessage = `Internal Server Error for GetAll :: ${err.message}`;
-        console.error(errorMessage);
+        logger.error(errorMessage);
         return {
             statusCode: 500,
             body: JSON.stringify({
@@ -151,7 +161,7 @@ const processGetAllEvent = async (): Promise<APIGatewayProxyResult> => {
 };
 
 const processGetByIdEvent = async (input: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    console.info('Processing Get By Id Event');
+    logger.info('Processing Get By Id Event');
     try {
         const id = input.pathParameters?.id;
 
@@ -169,14 +179,14 @@ const processGetByIdEvent = async (input: APIGatewayProxyEvent): Promise<APIGate
 
         if (product?.Item) {
             const successMessage = `Product with id = ${id} found`;
-            console.log(successMessage);
+            logger.info(successMessage);
             return {
                 statusCode: 200,
                 body: JSON.stringify(product.Item),
             };
         } else {
             const notFoundMessage = `Product with id = ${id} NOT found`;
-            console.log(notFoundMessage);
+            logger.info(notFoundMessage);
             return {
                 statusCode: 404,
                 body: JSON.stringify({
@@ -187,7 +197,7 @@ const processGetByIdEvent = async (input: APIGatewayProxyEvent): Promise<APIGate
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
         const errorMessage = `Internal Server Error for GetById :: ${err.message}`;
-        console.error(errorMessage);
+        logger.error(errorMessage);
         return {
             statusCode: 500,
             body: JSON.stringify({
@@ -198,7 +208,7 @@ const processGetByIdEvent = async (input: APIGatewayProxyEvent): Promise<APIGate
 };
 
 const processDeleteEvent = async (input: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-    console.info('Processing Delete Event');
+    logger.info('Processing Delete Event');
     try {
         const id = input.pathParameters?.id;
         const getParams: GetItemInput = {
@@ -218,7 +228,7 @@ const processDeleteEvent = async (input: APIGatewayProxyEvent): Promise<APIGatew
             };
             await dbClient.delete(deleteParams).promise();
             const successMessage = `Product with id = ${id} was deleted`;
-            console.log(successMessage);
+            logger.info(successMessage);
             return {
                 statusCode: 200,
                 body: JSON.stringify({
@@ -227,7 +237,7 @@ const processDeleteEvent = async (input: APIGatewayProxyEvent): Promise<APIGatew
             };
         } else {
             const notFoundMessage = `Product with id = ${id} was deleted`;
-            console.log(notFoundMessage);
+            logger.info(notFoundMessage);
             return {
                 statusCode: 404,
                 body: JSON.stringify({
@@ -238,7 +248,7 @@ const processDeleteEvent = async (input: APIGatewayProxyEvent): Promise<APIGatew
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
         const errorMessage = `Internal Server Error for Delete :: ${err.message}`;
-        console.error(errorMessage);
+        logger.error(errorMessage);
         return {
             statusCode: 500,
             body: JSON.stringify({
@@ -249,7 +259,7 @@ const processDeleteEvent = async (input: APIGatewayProxyEvent): Promise<APIGatew
 };
 
 const addResponseHeaders = (response: APIGatewayProxyResult): APIGatewayProxyResult => {
-    console.info('Adding Response Headers');
+    logger.info('Adding Response Headers');
     response.headers = {
         'Content-Type': 'application/json',
         'X-Custom-Header': 'application/json',

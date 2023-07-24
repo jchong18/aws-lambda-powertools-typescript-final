@@ -14,7 +14,20 @@ curl -X POST $API -H "Content-type: Application/JSON" -d '{"name":"axe", "price"
 curl -X POST $API -H "Content-type: Application/JSON" -d '{"name":"screwdriver", "price":6}'
 curl -X POST $API -H "Content-type: Application/JSON" -d '{"name":"allen wrench", "price":1}'
 curl -X POST $API -H "Content-type: Application/JSON" -d '{"name":"bolt cutter", "price":35}'
-curl -X POST $API -H "Content-type: Application/JSON" -d '{"name":"bolt cutter", "price":35}'
-curl -X POST $API -H "Content-type: Application/JSON" -d '{"name":"bolt cutter", "price":35}'
 
-curl -X GET $API/ForceError
+curl -X GET ${API}
+curl -X GET ${API}
+curl -X GET ${API}ForceError
+curl -X GET ${API}ForceError
+curl -X GET ${API}ForceError
+curl -X GET ${API}
+curl -X GET ${API}
+curl -X GET ${API}
+curl -X GET ${API}
+curl -X GET ${API}
+curl -X GET ${API}ForceError
+curl -X GET ${API}ForceError
+curl -X GET ${API}
+curl -X GET ${API}ForceError
+curl -X GET ${API}ForceError
+curl -X GET ${API}
