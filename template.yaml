@@ -1,0 +1,117 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  aws-lambda-powertools-typescript
+
+  Sample SAM Template for aws-lambda-powertools-typescript
+
+Globals:
+  Function:
+    Timeout: 15
+    MemorySize: 1024
+    Tracing: Active
+    Environment:
+      Variables:
+        PRODUCT_TABLE_NAME: !Ref ProductsTable
+  Api:
+    TracingEnabled: true
+
+Resources:
+  ProductsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: 'PK'
+          AttributeType: 'S'
+      KeySchema:
+        - AttributeName: 'PK'
+          KeyType: 'HASH'
+      ProvisionedThroughput:
+        ReadCapacityUnits: 20
+        WriteCapacityUnits: 20
+  ProductsApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      Name: Products API
+  ProductsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: products/
+      Handler: app.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ProductsTable
+      Runtime: nodejs16.x
+      Architectures:
+      - x86_64
+      Tracing: Active
+      Environment:
+        Variables:
+          POWERTOOLS_SERVICE_NAME: products
+          POWERTOOLS_METRICS_NAMESPACE: aws-lambda-powertools-typescript
+          LOG_LEVEL: INFO
+      Events:
+        GetById:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ProductsApi
+            Path: /products/{id}
+            Method: get
+        GetAll:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ProductsApi
+            Path: /products
+            Method: get
+        Put:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ProductsApi
+            Path: /products/{id}
+            Method: put
+        Post:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ProductsApi
+            Path: /products
+            Method: post
+        Delete:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ProductsApi
+            Path: /products/{id}
+            Method: delete
+
+    Metadata: # Manage esbuild properties
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2020
+        # Sourcemap: true # Enabling source maps will create the required NODE_OPTIONS environment variables on your lambda function during sam build
+        EntryPoints:
+        - app.ts
+
+  ApplicationResourceGroup:
+    Type: AWS::ResourceGroups::Group
+    Properties:
+      Name:
+        Fn::Sub: ApplicationInsights-SAM-${AWS::StackName}
+      ResourceQuery:
+        Type: CLOUDFORMATION_STACK_1_0
+  ApplicationInsightsMonitoring:
+    Type: AWS::ApplicationInsights::Application
+    Properties:
+      ResourceGroupName:
+        Ref: ApplicationResourceGroup
+      AutoConfigurationEnabled: 'true'
+Outputs:
+  ProductsApi:
+    Description: "API Gateway endpoint URL for Prod stage for Products function"
+    Value: !Sub "https://${ProductsApi}.execute-api.${AWS::Region}.amazonaws.com/prod/products/"
+  ProductsFunction:
+    Description: "Products Lambda Function ARN"
+    Value: !GetAtt ProductsFunction.Arn
+  DynamoDBTable:
+    Description: "Products DynamoDB Table"
+    Value: !Sub ${ProductsTable}
